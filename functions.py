@@ -9,7 +9,7 @@
 # -- --------------------------------------------------------------------------------------------------- -- #
 """
 
-# import MetaTrader5 as mt5
+import MetaTrader5 as mt5
 import pytz
 from datetime import datetime
 import pandas as pd
@@ -18,22 +18,21 @@ from ta.momentum import StochasticOscillator
 from ta.trend import MACD
 
 
-# def import_data():
-#     # mt5.initialize()
-#     if not mt5.initialize():
-#         print("initialize() failed, error code =", mt5.last_error())
-#         quit()
-#     # set time zone to UTC
-#     timezone = pytz.timezone("Etc/UTC")
-#     # create 'datetime' objects in UTC time zone to avoid the implementation of a local time zone offset
-#     utc_from = datetime(2020, 2, 1, tzinfo=timezone)
-#     utc_to = datetime(2021, 2, 1, tzinfo=timezone)
-#     rates = mt5.copy_rates_range("BITCOIN", mt5.TIMEFRAME_D1, utc_from, utc_to)
-#     # create DataFrame out of the obtained data
-#     rates_frame = pd.DataFrame(rates)
-#     # rates_frame['time'] = pd.to_datetime(rates_frame['time'], unit='s')
-#     rates_frame.to_csv('BTC2021_2.csv')
-#     return rates_frame
+def import_data():
+    # mt5.initialize()
+    if not mt5.initialize():
+        print("initialize() failed, error code =", mt5.last_error())
+        quit()
+    # set time zone to UTC
+    timezone = pytz.timezone("Etc/UTC")
+    utc_from = datetime(2020,1, 1, tzinfo=timezone)
+    utc_to = datetime(2021, 1, 1, tzinfo=timezone)
+    rates = mt5.copy_rates_range("EURUSD", mt5.TIMEFRAME_D1, utc_from, utc_to)
+    # create DataFrame out of the obtained data
+    rates_frame = pd.DataFrame(rates)
+    rates_frame['time'] = pd.to_datetime(rates_frame['time'], unit='s')
+    rates_frame.to_csv('EURUSD2021.csv')
+    return rates_frame
 
 def technicals(data):
     data = data.copy()
@@ -59,14 +58,6 @@ def technicals(data):
 
     data = data.drop(['Unnamed: 0'], axis=1)
     return data
-def tec2(data):
-    df = data.copy()
-    indicator_stoc = StochasticOscillator(high=data['high'], low=data['low'], close=data['close'])
-    df['stochastic'] = indicator_stoc.stoch()
-    df['stochastic_buy_signal'] = indicator_stoc.stoch() < 20
-    df['stochastic_sell_signal'] = indicator_stoc.stoch() > 80
-    return df
-
 
 def transaccion(vol, pips, df):
     rett = []
@@ -74,18 +65,16 @@ def transaccion(vol, pips, df):
     while len(df) > 2:
         precio_transaccion = df['close'].iloc[0]
         posicion = precio_transaccion * vol
+
+        cierres = df.query('(close >= @precio_transaccion + @pips/100) or (close <= @precio_transaccion - @pips/100)')
+        precio_cierre = cierres.iloc[0, 5]
+        closed_transaction = precio_cierre * vol
         day0 = df.iloc[0, 0]
-
-        closed = df[
-            (df['close'] >= (precio_transaccion + pips / 100)) | (df['close'] <= (precio_transaccion - pips / 100))]
-        closed_price = closed.iloc[0, 5]
-        closed_transaction = closed_price * vol
-        day1 = closed.iloc[0, 0]
-
-        ret = 246 * (closed_transaction / posicion - 1) / (day1 - day0)
-
+        day1 = cierres.iloc[0, 0]
+        days = (day1 - day0)
+        days = int(days.total_seconds() + days.days * pd.Timedelta(days=1).total_seconds())
+        ret = 246 * (closed_transaction / posicion - 1) / days
         rett.append(ret)
-
-        df = df.loc[closed.iloc[0, 0]:]
+        df = df.loc[cierres.iloc[0, 0]:]
 
     return rett
