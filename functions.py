@@ -18,6 +18,7 @@ from ta.volatility import BollingerBands
 from ta.momentum import StochasticOscillator
 from ta.trend import MACD
 import numpy as np
+import pyswarms as ps
 
 
 def import_data():
@@ -58,10 +59,9 @@ def technicals(data):
     data['macd_buy_signal'] = macd.macd() > macd.macd_signal()
     data['macd_sell_hist'] = macd.macd() < macd.macd_diff()
 
-    data = data.drop(['Unnamed: 0'], axis=1)
     return data
 
-def tradear(data: pd.DataFrame, sl: float, tp: float, vol: int):
+def tradear(data: pd.DataFrame, sl: float, tp: float, vol: int, visuales = False, optimizar=True):
     operaciones_cerradas = []
     operaciones_activas = []
     # Hacemos hasta 10 operaciones
@@ -80,7 +80,7 @@ def tradear(data: pd.DataFrame, sl: float, tp: float, vol: int):
         if sum(buy_signals) >= 2 and len(operaciones_activas) < max_num_operaciones and cash > (
                 (10_000 // precio) * 1.00125):
             # Sacar numero de titulos
-            num_titulos = vol
+            num_titulos = vol # lote 100,000
             # Sacar costo de compra
             costo = num_titulos * precio
             # Agregar comisiones
@@ -98,53 +98,106 @@ def tradear(data: pd.DataFrame, sl: float, tp: float, vol: int):
                 "costo": costo,
                 "cost_com": costo_com,
                 "stop_loss": stop_loss,
-                "take_profit": take_profit
+                "take_profit": take_profit,
+                "Tipo": "Compra"
             })
-            # print(f"Comprando {num_titulos} a {precio} - Cash {cash}")
+            if visuales:
+               print(f"Comprando {num_titulos} a {precio} - Cash {cash}")
 
         # Checar sl y tp
         for operacion_activa in operaciones_activas:
+            if operacion_activa["Tipo"] == "Compra":
+                if precio < operacion_activa["stop_loss"] or precio > operacion_activa["take_profit"]:
+                    tipo = "stop loss" if precio < operacion_activa["stop_loss"] else "take profit"
+                    operacion_activa["fecha_cierre"] = fecha
+                    operacion_activa["precio_venta"] = precio
+                    operacion_activa["valor_port"] = cash + operacion_activa["num_titulos"] * precio
+                    num_titulos = operacion_activa["num_titulos"]
+                    venta = num_titulos * precio
+                    venta_com = venta * (1 - 0.00125)  # Comision descontada
+                    cash += venta_com
+                    operaciones_cerradas.append(operacion_activa)
+                    operaciones_activas.remove(operacion_activa)
+                    if visuales:
+                        print(f"Cerrando por {tipo} {num_titulos} a {precio} - Cash {cash}")
+            else:
+                if precio > operacion_activa["stop_loss"] or precio < operacion_activa["take_profit"]:
+                    tipo = "stop loss" if precio > operacion_activa["stop_loss"] else "take profit"
+                    operacion_activa["fecha_cierre"] = fecha
+                    operacion_activa["precio_venta"] = precio
+                    delta = operacion_activa["precio_compra"] * num_titulos - (precio * num_titulos)
+                    operacion_activa["valor_port"] = cash + (operacion_activa["num_titulos"] * operacion_activa["precio_compra"]) + delta
+                    num_titulos = operacion_activa["num_titulos"]
+                    venta = num_titulos * operacion_activa["precio_compra"] + delta
+                    venta_com = venta * (1 - 0.00125)  # Comision descontada
+                    cash += venta_com
+                    operaciones_cerradas.append(operacion_activa)
+                    operaciones_activas.remove(operacion_activa)
+                    if visuales:
+                        print(f"Cerrando por {tipo} {num_titulos} a {precio} - Cash {cash}")
 
-            if precio < operacion_activa["stop_loss"] or precio > operacion_activa["take_profit"]:
-                tipo = "stop loss" if precio < operacion_activa["stop_loss"] else "take profit"
-                operacion_activa["fecha_cierre"] = fecha
-                operacion_activa["precio_venta"] = precio
-                operacion_activa["valor_port"] = cash + operacion_activa["num_titulos"] * precio
-                num_titulos = operacion_activa["num_titulos"]
-                venta = num_titulos * precio
-                venta_com = venta * (1 - 0.00125)  # Comision descontada
-                cash += venta_com
-                operaciones_cerradas.append(operacion_activa)
-                operaciones_activas.remove(operacion_activa)
-                #print(f"Vendiendo por {tipo} {num_titulos} a {precio} - Cash {cash}")
+        # if sum(sell_signals) >= 2:
+        #     for operacion_activa in operaciones_activas:
+        #         operacion_activa["fecha_cierre"] = fecha
+        #         operacion_activa["precio_venta"] = precio
+        #         operacion_activa["valor_port"] = cash + operacion_activa["num_titulos"] * precio
+        #         num_titulos = operacion_activa["num_titulos"]
+        #         venta = num_titulos * precio
+        #         venta_com = venta * (1 - 0.00125)  # Comision descontada
+        #         cash += venta_com
+        #         operaciones_cerradas.append(operacion_activa)
 
-        if sum(sell_signals) >= 2:
-            for operacion_activa in operaciones_activas:
-                operacion_activa["fecha_cierre"] = fecha
-                operacion_activa["precio_venta"] = precio
-                operacion_activa["valor_port"] = cash + operacion_activa["num_titulos"] * precio
-                num_titulos = operacion_activa["num_titulos"]
-                venta = num_titulos * precio
-                venta_com = venta * (1 - 0.00125)  # Comision descontada
-                cash += venta_com
-                operaciones_cerradas.append(operacion_activa)
-                # print(f"Vendiendo {num_titulos} a {precio} - Cash {cash}")
-            operaciones_activas = []
+        if sum(sell_signals) >= 2 and len(operaciones_activas) < max_num_operaciones and cash > (
+                (10_000 // precio) * 1.00125):
+            # Sacar numero de titulos
+            num_titulos = vol  # lote 100,000
+            # Sacar costo de compra
+            costo = num_titulos * precio
+            # Agregar comisiones
+            costo_com = costo * 1.00125
+            # Descontar al cash
+            cash -= costo_com
+            # Poner stop loss y take profit
+            stop_loss = precio * (1 + sl)
+            take_profit = precio * (1 - tp)
+            # agregar a operaciones activas
+            operaciones_activas.append({
+                "fecha": fecha,
+                "precio_compra": precio,
+                "num_titulos": num_titulos,
+                "costo": costo,
+                "cost_com": costo_com,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "Tipo" : "Venta"
+            })
+            if visuales:
+                 print(f"Vendiendo {num_titulos} a {precio} - Cash {cash}")
+            # operaciones_activas = []
 
         # Historico del valor del portafolio
         if operaciones_activas:
-            num_titulos = sum(list(map(lambda operacion: operacion["num_titulos"], operaciones_activas)))
-            valor_port.append(cash + num_titulos * precio)
+            valor_operaciones = 0
+            for operacion_activa in operaciones_activas:
+                if operacion_activa["Tipo"] == "Compra":
+                    # num_titulos = sum(list(map(lambda operacion: operacion["num_titulos"], operaciones_activas)))
+                    # valor_port.append(cash + num_titulos * precio)
+                    valor_operaciones += num_titulos * precio
+                else:
+                    delta = operacion_activa["precio_compra"] * num_titulos - (precio * num_titulos)
+                    valor_operaciones +=  (operacion_activa["num_titulos"] * operacion_activa["precio_compra"]) + delta
+            valor_port.append(cash + valor_operaciones)
         else:
             valor_port.append(cash)
-
-    return valor_port[-1]
+    if optimizar:
+        return valor_port[-1]
+    return valor_port
 
 
 def busqueda_exhaustiva(data):
-    sl_ = np.linspace(0.001, 0.05, 20)
-    tp_ = np.linspace(0.001, 0.05, 20)
-    vol_ = np.linspace(5000, 15000, 50)
+    sl_ = np.linspace(0.1, 0.9, 20)
+    tp_ = np.linspace(0.1, 0.9, 20)
+    vol_ = np.linspace(5000, 15000, 20)
     resultados = {
         "stop_loss": [],
         "take_profit": [],
@@ -167,11 +220,11 @@ def busqueda_exhaustiva(data):
 
 
 def busqueda_pso(data):
-    rango_min = np.array([0.001, 0.001, 5000])  # sl, tp, vol
-    rango_max = np.array([0.05, 0.05, 15000])  # sl, tp, vol
+    rango_min = np.array([0.1, 0.1, 5000])  # sl, tp, vol
+    rango_max = np.array([0.9, 0.9, 15000])  # sl, tp, vol
     bounds = (rango_min, rango_max)
 
     options = {'c1': 0.5, 'c2': 0.3, 'w': 0.9}
     optimizer = ps.single.GlobalBestPSO(n_particles=10, dimensions=3, options=options, bounds=bounds)
-    best_cost, best_pos = optimizer.optimize(lambda args: np.array([tradear(data, arg[0], arg[1], arg[2]) for arg in args]), iters=100)
+    best_cost, best_pos = optimizer.optimize(lambda args: np.array([-tradear(data, arg[0], arg[1], arg[2]) for arg in args]), iters=100)
     return best_cost, best_pos
